@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Emotion Detection Service</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: black;
+        }
+
+        #video {
+            width: 1px;
+            height: 1px;
+            position: absolute;
+            top: 0;
+            left: 0;
+            opacity: 0.01;
+        }
+
+        #status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: lime;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 9999;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="status">Loading...</div>
+    <video id="video" autoplay muted playsinline></video>
+
+    <script>
+        // Global event emitter for other pages to listen to
+        window.EmotionAPI = {
+            currentEmotion: null,
+            confidence: 0,
+            onEmotionChange: null,
+            isReady: false
+        };
+
+        async function init() {
+            try {
+                // Start camera
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 320, height: 240, frameRate: 15 },
+                    audio: false
+                });
+
+                const video = document.getElementById('video');
+                video.srcObject = stream;
+
+                await new Promise(resolve => video.onloadedmetadata = resolve);
+
+                // Load models
+                await faceapi.nets.tinyFaceDetector.loadFromUri(
+                    'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights'
+                );
+                await faceapi.nets.faceExpressionNet.loadFromUri(
+                    'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights'
+                );
+
+                window.EmotionAPI.isReady = true;
+                document.getElementById('status').textContent = '✅ Active';
+
+                // Start detection
+                setInterval(detectEmotion, 500);
+
+            } catch (err) {
+                console.error('Init error:', err);
+                document.getElementById('status').textContent = '❌ Error';
+            }
+        }
+
+        async function detectEmotion() {
+            try {
+                const result = await faceapi
+                    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+                    .withFaceExpressions();
+
+                if (result) {
+                    const expressions = result.expressions;
+                    let topEmotion = 'neutral';
+                    let topScore = 0;
+
+                    for (const [emotion, score] of Object.entries(expressions)) {
+                        if (score > topScore) {
+                            topScore = score;
+                            topEmotion = emotion;
+                        }
+                    }
+
+                    // Update global state
+                    window.EmotionAPI.currentEmotion = topEmotion;
+                    window.EmotionAPI.confidence = Math.round(topScore * 100);
+                    window.EmotionAPI.timestamp = Date.now();
+
+                    // Emit event for other scripts
+                    if (window.EmotionAPI.onEmotionChange) {
+                        window.EmotionAPI.onEmotionChange({
+                            emotion: topEmotion,
+                            confidence: window.EmotionAPI.confidence,
+                            timestamp: window.EmotionAPI.timestamp
+                        });
+                    }
+
+                    // Also dispatch a custom event
+                    window.dispatchEvent(new CustomEvent('emotionUpdate', {
+                        detail: {
+                            emotion: topEmotion,
+                            confidence: window.EmotionAPI.confidence,
+                            rawScores: expressions
+                        }
+                    }));
+
+                    // Update status
+                    document.getElementById('status').textContent =
+                        `✅ ${topEmotion} (${window.EmotionAPI.confidence}%)`;
+                }
+            } catch (err) {
+                // Silent fail
+            }
+        }
+
+        // Start when page loads
+        window.addEventListener('load', init);
+    </script>
+</body>
+
+</html>
